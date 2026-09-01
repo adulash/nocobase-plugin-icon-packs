@@ -1,0 +1,43 @@
+{
+  "name": "@adulash/plugin-icon-packs",
+  "displayName": "Icon packs",
+  "displayName.ar-EG": "حزم الأيقونات",
+  "version": "0.1.0",
+  "description": "Adds extra icon packs (Font Awesome, and more) to NocoBase's icon picker. Optionally replaces the built-in Ant Design icons.",
+  "description.ar-EG": "يضيف حزم أيقونات إضافية (Font Awesome وغيرها) إلى منتقي الأيقونات في NocoBase، مع خيار استبدال أيقونات Ant Design.",
+  "main": "dist/server/index.js",
+  "license": "MIT",
+  "files": [
+    "dist",
+    "client.js",
+    "server.js",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "author": "adulash",
+  "keywords": [
+    "nocobase",
+    "nocobase-plugin",
+    "icons",
+    "icon-pack",
+    "font-awesome"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/adulash/nocobase-plugin-icon-packs"
+  },
+  "homepage": "https://github.com/adulash/nocobase-plugin-icon-packs#readme",
+  "bugs": {
+    "url": "https://github.com/adulash/nocobase-plugin-icon-packs/issues"
+  },
+  "scripts": {
+    "build:pack": "node scripts/build-pack.js",
+    "build": "node scripts/build.js",
+    "verify": "node scripts/verify.js"
+  },
+  "peerDependencies": {
+    "@nocobase/client": "2.x",
+    "@nocobase/server": "2.x"
+  }
+}

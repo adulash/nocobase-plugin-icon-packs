@@ -1,0 +1,4 @@
+# CI runs on Linux and the workflows are shell — keep LF in the repo regardless of OS.
+* text=auto eol=lf
+*.png binary
+*.svg text eol=lf

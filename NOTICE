@@ -1,0 +1,22 @@
+THIRD-PARTY ICON ARTWORK
+========================
+
+The code in this repository is MIT licensed (see LICENSE).
+The icon artwork it ships is NOT — each pack keeps the licence of its upstream project,
+and those licences travel with any redistribution of this plugin.
+
+--------------------------------------------------------------------------------
+Pack: fa-solid  (packs/fa-solid/)
+Source: Font Awesome Free 6.7.2 — https://fontawesome.com
+Icons licence: CC BY 4.0 — https://creativecommons.org/licenses/by/4.0/
+Full terms: https://fontawesome.com/license/free
+Copyright (c) Fonticons, Inc.
+
+CC BY 4.0 requires attribution when the artwork is redistributed. This NOTICE file,
+the banner comment in dist/client/index.js, and the credit line in README.md satisfy
+that requirement. Keep all three when redistributing.
+--------------------------------------------------------------------------------
+
+This project is not affiliated with, endorsed by, or sponsored by Fonticons, Inc.
+"Font Awesome" is a trademark of Fonticons, Inc., used here only to identify the
+origin of the artwork.

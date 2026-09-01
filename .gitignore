@@ -1,0 +1,15 @@
+node_modules/
+
+# Build output — rebuilt by `node scripts/build.js`, produced fresh in CI and releases.
+# The leading slash matters: a bare "client.js" would also match src/client.js and
+# silently drop the actual source from the repo.
+/dist/
+/client.js
+/server.js
+
+# Upstream artwork cache. The generated packs/<pack>/*.json ARE committed: they make the
+# build hermetic and pin the exact artwork a release shipped. This is just the raw download.
+/packs/src/
+
+*.tgz
+*.tar.gz

@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # The generated pack data (packs/*/manifest.json, paths.json) is committed, so the
+      # build is hermetic — no network, no dependencies. Refreshing artwork from upstream
+      # is a deliberate manual step (scripts/build-pack.js), not something CI does silently.
+      - name: Build
+        run: node scripts/build.js
+
+      - name: Verify
+        run: node scripts/verify.js
+
+      # Guard the promise the README makes: the picker needs names eagerly, everything
+      # else must stay lazy. If the path data ever leaks into the bundle this fails.
+      - name: Check the eager bundle stays small
+        run: |
+          BYTES=$(stat -c%s dist/client/index.js)
+          echo "dist/client/index.js = $BYTES bytes"
+          if [ "$BYTES" -gt 102400 ]; then
+            echo "::error::eager bundle is over 100 KB — path data may have leaked out of the lazy file."
+            exit 1
+          fi
