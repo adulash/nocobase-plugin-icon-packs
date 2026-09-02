@@ -22,7 +22,7 @@ const ROOT = path.resolve(__dirname, '..');
 const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
 const OUT = path.join(ROOT, 'dist');
 
-const ENABLED_PACKS = ['fa-solid'];
+const ENABLED_PACKS = ['fa-solid', 'tb-outline'];
 
 const w = (p, s) => {
   fs.mkdirSync(path.dirname(p), { recursive: true });
@@ -45,15 +45,24 @@ const attributions = packs
   .join('\n');
 
 /* ------------------------------------------------------- client bundle */
-const src = fs.readFileSync(path.join(ROOT, 'src', 'client.js'), 'utf8');
-// strip the CommonJS tail; the UMD factory below supplies its own exports
-const body = src.replace(/\nmodule\.exports\s*=\s*\{[\s\S]*?\};\s*$/, '\n');
+// Both sources are plain CommonJS modules; the tail export is stripped and the bodies are
+// concatenated inside the UMD factory, which supplies the exports instead.
+const stripTail = (s) => s.replace(/\nmodule\.exports\s*=\s*\{[\s\S]*?\};\s*$/, '\n');
+const body = stripTail(fs.readFileSync(path.join(ROOT, 'src', 'client.js'), 'utf8'));
+const pickerBody = stripTail(fs.readFileSync(path.join(ROOT, 'src', 'picker.js'), 'utf8'));
 
 // manifests are inlined (names only, small). paths.json stays a separate lazy file.
+const LABELS = { 'fa-solid': 'Font Awesome', 'tb-outline': 'Tabler' };
+const PREFIX = { 'fa-solid': 'Fa', 'tb-outline': 'Tb' };
 const inlinedPacks = packs.map((p) => ({
   pack: p.pack,
-  manifest: { mode: p.manifest.mode, names: p.manifest.names },
+  label: LABELS[p.pack] || p.pack,
+  prefix: PREFIX[p.pack] || '',
+  manifest: { mode: p.manifest.mode, names: p.manifest.names, common: p.manifest.common || [] },
 }));
+
+// The picker needs the same names; it is derived from PACKS inside the bundle rather than
+// inlined a second time — duplicating 6,500 names would double the eager payload.
 
 const client = `/*!
  * ${pkg.name} v${pkg.version}
@@ -65,25 +74,44 @@ ${attributions}
   var NAME = ${JSON.stringify(pkg.name)};
   var SELF = (typeof document !== 'undefined' && document.currentScript && document.currentScript.src) || '';
   if (typeof exports === 'object' && typeof module === 'object') {
-    module.exports = factory(require('@nocobase/client'), require('react'), SELF);
+    module.exports = factory(require('@nocobase/client'), require('react'), require('antd'), SELF);
   } else if (typeof define === 'function' && define.amd) {
-    define(NAME, ['@nocobase/client', 'react'], function (nb, React) { return factory(nb, React, SELF); });
+    define(NAME, ['@nocobase/client', 'react', 'antd'], function (nb, React, antd) { return factory(nb, React, antd, SELF); });
   } else if (typeof exports === 'object') {
-    exports[NAME] = factory(require('@nocobase/client'), require('react'), SELF);
+    exports[NAME] = factory(require('@nocobase/client'), require('react'), require('antd'), SELF);
   } else {
-    root[NAME] = factory(root['@nocobase/client'], root.react, SELF);
+    root[NAME] = factory(root['@nocobase/client'], root.react, root.antd, SELF);
   }
-})(typeof self !== 'undefined' ? self : this, function (nb, React, SELF) {
+})(typeof self !== 'undefined' ? self : this, function (nb, React, antd, SELF) {
   'use strict';
 
   var PACKS = ${JSON.stringify(inlinedPacks)};
 
-${body
+${[body, pickerBody]
+  .join('\n')
   .split('\n')
   .map((l) => (l.trim() ? '  ' + l : l))
   .join('\n')}
 
-  var Plugin = createPlugin(nb, React, { packs: PACKS, selfSrc: SELF, verbose: true });
+  var PICKER_PACKS = PACKS.map(function (p) {
+    return { pack: p.pack, label: p.label, prefix: p.prefix, names: p.manifest.names, common: p.manifest.common };
+  });
+
+  var Picker = null;
+  try {
+    Picker = createIconPicker(React, nb, PICKER_PACKS, antd);
+  } catch (e) {
+    // A picker we failed to build must not take icon selection down with it.
+    console.warn('[icon-packs] could not build the picker, keeping the built-in one:', e && e.message);
+  }
+
+  var Plugin = createPlugin(nb, React, {
+    packs: PACKS,
+    selfSrc: SELF,
+    verbose: true,
+    picker: Picker,
+    version: ${JSON.stringify(pkg.version)},
+  });
   return { __esModule: true, default: Plugin };
 });
 `;

@@ -45,7 +45,7 @@ let fetched = [];
 global.fetch = (url) => {
   fetched.push(url);
   const rel = String(url).replace(/^https?:\/\/[^/]+/, '');
-  const local = path.join(ROOT, rel.replace(/^\/+/, ''));
+  const local = path.join(ROOT, rel.split('?')[0].replace(/^\/+/, ''));
   if (!fs.existsSync(local)) return Promise.resolve({ ok: false, status: 404 });
   return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(JSON.parse(fs.readFileSync(local, 'utf8'))) });
 };
@@ -66,11 +66,19 @@ new Function('self', 'define', 'requirejs', 'document', 'console', code)(
 check(!!defined, 'defines an AMD module');
 check(defined && defined.name === pkg.name, 'module name matches package name');
 check(
-  defined && JSON.stringify(defined.deps) === JSON.stringify(['@nocobase/client', 'react']),
+  defined && JSON.stringify(defined.deps) === JSON.stringify(['@nocobase/client', 'react', 'antd']),
   'externals are ' + JSON.stringify(defined && defined.deps)
 );
 
-const mod = defined.factory(v1, React);
+// antd is only used to build the picker; nothing here renders it.
+const antdStub = {
+  Button: function Button() {},
+  Popover: function Popover() {},
+  Input: function Input() {},
+  Empty: Object.assign(function Empty() {}, { PRESENTED_IMAGE_SIMPLE: 'stub' }),
+};
+
+const mod = defined.factory(v1, React, antdStub);
 check(mod && mod.__esModule === true, 'marked __esModule');
 check(typeof mod.default === 'function', 'exports a default class');
 
@@ -79,17 +87,37 @@ check(instance instanceof FakePlugin, 'class actually extends Plugin (ES6 inheri
 
 /* ---------------------------------------------- load() */
 (async () => {
-  const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'packs', 'fa-solid', 'manifest.json'), 'utf8'));
+  const packDirs = fs
+    .readdirSync(path.join(ROOT, 'packs'))
+    .filter((d) => fs.existsSync(path.join(ROOT, 'packs', d, 'manifest.json')));
+  const manifests = packDirs.map((d) =>
+    JSON.parse(fs.readFileSync(path.join(ROOT, 'packs', d, 'manifest.json'), 'utf8'))
+  );
+  const expected = manifests.reduce((a, m) => a + m.count, 0);
+
   fetched = [];
   await instance.load();
   await new Promise((r) => setTimeout(r, 0));
 
-  check(v1.icons.size === manifest.count, 'registered ' + v1.icons.size + ' icons in @nocobase/client (expected ' + manifest.count + ')');
-  check(v2.icons.size === manifest.count, 'registered ' + v2.icons.size + ' icons in @nocobase/client-v2 (the PICKER registry)');
-  check(v1.hasIcon('FaToothOutlined'), 'FaToothOutlined resolvable');
+  console.log('  ....  packs: ' + manifests.map((m) => m.pack + '=' + m.count).join(', '));
+  check(v1.icons.size === expected, 'registered ' + v1.icons.size + ' icons in @nocobase/client (expected ' + expected + ')');
+  check(v2.icons.size === expected, 'registered ' + v2.icons.size + ' icons in @nocobase/client-v2 (the PICKER registry)');
+  check(v1.hasIcon('FaToothOutlined'), 'FaToothOutlined resolvable (fill pack)');
+  check(v1.hasIcon('TbDentalOutlined'), 'TbDentalOutlined resolvable (stroke pack)');
 
-  const suffixed = manifest.names.every((n) => /(?:Outlined|Filled|TwoTone)$/.test(n));
-  check(suffixed, 'every name carries a picker-visible suffix');
+  const suffixed = manifests.every((m) => m.names.every((n) => /(?:Outlined|Filled|TwoTone)$/.test(n)));
+  check(suffixed, 'every name in every pack carries a picker-visible suffix');
+
+  const collisions = [];
+  const seen = new Set();
+  for (const m of manifests) {
+    for (const n of m.names) {
+      const k = n.toLowerCase();
+      if (seen.has(k)) collisions.push(n);
+      seen.add(k);
+    }
+  }
+  check(collisions.length === 0, 'no name collisions between packs' + (collisions.length ? ': ' + collisions.slice(0, 5) : ''));
 
   /* the point of the whole design: registering must not download the paths */
   check(fetched.length === 0, 'load() downloaded nothing (lazy) — fetches so far: ' + fetched.length);
@@ -107,9 +135,10 @@ check(instance instanceof FakePlugin, 'class actually extends Plugin (ES6 inheri
   if (effect) effect.effect();
   await new Promise((r) => setTimeout(r, 10));
   check(fetched.length === 1, 'exactly one fetch triggered by rendering: ' + JSON.stringify(fetched));
-  check(/paths\.json$/.test(fetched[0] || ''), 'the lazy file is paths.json');
+  check(/paths\.json\?v=/.test(fetched[0] || ''), 'the lazy file is version-stamped, so an upgrade cannot serve a stale cached copy');
+  check(/fa-solid/.test(fetched[0] || ''), 'only the pack that was rendered got fetched');
 
-  /* second icon must reuse the cache, not fetch again */
+  /* second icon from the SAME pack must reuse the cache, not fetch again */
   const Icon2 = v1.icons.get('faheartoutlined') || v1.icons.get('fastaroutlined');
   if (Icon2) {
     hooks.length = 0;
@@ -117,8 +146,82 @@ check(instance instanceof FakePlugin, 'class actually extends Plugin (ES6 inheri
     const e2 = hooks.find((h) => h.effect);
     if (e2) e2.effect();
     await new Promise((r) => setTimeout(r, 10));
-    check(fetched.length === 1, 'a second icon reuses the cache (still ' + fetched.length + ' fetch)');
+    check(fetched.length === 1, 'a second icon of the same pack reuses the cache (still ' + fetched.length + ' fetch)');
   }
+
+  /* an icon from the OTHER pack fetches its own file — packs stay independent */
+  const Tb = v1.icons.get('tbdentaloutlined');
+  check(typeof Tb === 'function', 'stroke-pack icon component exists');
+  if (Tb) {
+    hooks.length = 0;
+    Tb({});
+    const e3 = hooks.find((h) => h.effect);
+    if (e3) e3.effect();
+    await new Promise((r) => setTimeout(r, 10));
+    check(fetched.length === 2, 'the other pack fetched separately (' + fetched.length + ' total)');
+    check(/tb-outline/.test(fetched[1] || ''), 'second fetch is the tb-outline pack');
+
+    /* stroke icons must not be filled, and multi-path icons must draw every path */
+    hooks.length = 0;
+    const drawn = Tb({});
+    const svg = drawn.children[0];
+    check(svg.props.fill === 'none' && svg.props.stroke === 'currentColor', 'stroke pack renders stroked, not filled');
+    const paths = (svg.children || []).filter(Boolean);
+    check(paths.length >= 1, 'renders ' + paths.length + ' path(s) — multi-path icons are not truncated');
+  }
+
+  /* ---------------------------------------------- picker (pure helpers, no DOM) */
+  console.log('\n  -- picker --');
+  const picker = require(path.join(ROOT, 'src', 'picker.js'));
+  const LABELS = { 'fa-solid': 'Font Awesome', 'tb-outline': 'Tabler' };
+  const PREFIX = { 'fa-solid': 'Fa', 'tb-outline': 'Tb' };
+  const pickerPacks = manifests.map((m) => ({
+    pack: m.pack,
+    label: LABELS[m.pack] || m.pack,
+    prefix: PREFIX[m.pack] || '',
+    names: m.names,
+    common: m.common || [],
+  }));
+
+  // A realistic registry: antd keys are lower-cased, pack keys too. The antd names below
+  // include the ones that tripped prefix matching — FacebookOutlined and friends start
+  // with "Fa" but belong to Ant Design, not to the Font Awesome pack.
+  const antdSample = ['homeoutlined', 'toolfilled', 'staroutlined', 'clockcircletwotone',
+    'facebookoutlined', 'fastforwardoutlined', 'falloutlined'];
+  const registry = antdSample
+    .concat(manifests.flatMap((m) => m.names.slice(0, 50).map((n) => n.toLowerCase())));
+
+  const sources = picker.buildSources(registry, pickerPacks);
+  check(sources[0].key === 'antd', 'first tab is Ant Design');
+  check(sources.length === 1 + pickerPacks.length, 'one tab per source (' + sources.map((s) => s.key).join(', ') + ')');
+  check(
+    sources[0].names.length === antdSample.length,
+    'pack icons do not leak into the Ant Design tab, and Ant names starting with a pack prefix stay put (' +
+      sources[0].names.length + ' of ' + antdSample.length + ')'
+  );
+
+  for (const s of sources) {
+    const opened = picker.selectNames(s, '', 'Outlined');
+    check(
+      opened.shown.length <= picker.CAP,
+      s.key + ': opens on ' + opened.shown.length + ' icons (cap ' + picker.CAP + ') — this is the freeze fix'
+    );
+  }
+
+  const faTab = sources.find((s) => s.key === 'fa-solid');
+  const tbTab = sources.find((s) => s.key === 'tb-outline');
+  check(picker.selectNames(faTab, '').shown.length === (faTab.common || []).length,
+    'a pack opens on its curated set, not its full list');
+  const dent = picker.selectNames(tbTab, 'dental');
+  check(dent.total >= 2 && dent.shown.some((n) => n === 'TbDentalOutlined'),
+    'search reaches the whole pack, not just the curated set (' + dent.total + ' hits for "dental")');
+
+  const huge = picker.selectNames(tbTab, 'a');
+  check(huge.capped && huge.shown.length === picker.CAP,
+    'a broad search is capped at ' + picker.CAP + ' of ' + huge.total + ' and says so');
+
+  const styled = picker.selectNames(sources[0], '', 'Filled');
+  check(styled.shown.every((n) => picker.styleOf(n) === 'Filled'), 'the Ant Design tab still filters by style');
 
   console.log('\n' + (pass ? 'All checks passed.' : 'One or more checks FAILED.'));
   process.exit(pass ? 0 : 1);

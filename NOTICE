@@ -16,6 +16,14 @@ CC BY 4.0 requires attribution when the artwork is redistributed. This NOTICE fi
 the banner comment in dist/client/index.js, and the credit line in README.md satisfy
 that requirement. Keep all three when redistributing.
 --------------------------------------------------------------------------------
+Pack: tb-outline  (packs/tb-outline/)
+Source: Tabler Icons 3.46.0 — https://tabler.io/icons
+Icons licence: MIT — https://github.com/tabler/tabler-icons/blob/main/LICENSE
+Copyright (c) Paweł Kuna
+
+MIT imposes no attribution obligation on rendered output, but the licence text must
+travel with redistributed copies of the artwork. It is reproduced above by reference.
+--------------------------------------------------------------------------------
 
 This project is not affiliated with, endorsed by, or sponsored by Fonticons, Inc.
 "Font Awesome" is a trademark of Fonticons, Inc., used here only to identify the

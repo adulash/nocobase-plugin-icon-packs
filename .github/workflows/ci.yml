@@ -25,13 +25,19 @@ jobs:
       - name: Verify
         run: node scripts/verify.js
 
-      # Guard the promise the README makes: the picker needs names eagerly, everything
-      # else must stay lazy. If the path data ever leaks into the bundle this fails.
-      - name: Check the eager bundle stays small
+      # Guard the promise the README makes: names ship eagerly, path data does not.
+      # The bundle grows with the number of icon NAMES, so the ceiling is generous —
+      # what it actually catches is path data leaking in, which would add megabytes.
+      - name: Check path data stays out of the eager bundle
         run: |
-          BYTES=$(stat -c%s dist/client/index.js)
-          echo "dist/client/index.js = $BYTES bytes"
-          if [ "$BYTES" -gt 102400 ]; then
-            echo "::error::eager bundle is over 100 KB — path data may have leaked out of the lazy file."
+          BUNDLE=$(stat -c%s dist/client/index.js)
+          LAZY=$(cat dist/client/packs/*/paths.json | wc -c)
+          echo "eager bundle = $BUNDLE bytes | lazy path data = $LAZY bytes"
+          if [ "$BUNDLE" -gt 409600 ]; then
+            echo "::error::eager bundle is over 400 KB — path data has probably leaked into it."
+            exit 1
+          fi
+          if [ "$LAZY" -lt 500000 ]; then
+            echo "::error::lazy path data is suspiciously small — is it still being shipped separately?"
             exit 1
           fi

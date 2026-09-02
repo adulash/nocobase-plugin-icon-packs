@@ -39,10 +39,17 @@ function assetBase(selfSrc) {
   return i > 0 ? clean.slice(0, i) : '';
 }
 
-function loadPaths(base, pack) {
+/**
+ * The pack file lives at a stable URL, so a browser that cached one version keeps serving
+ * it after an upgrade. That bit us: a 0.1.x file (one path per icon, stored as a string)
+ * was replayed to 0.2.x code that expects a list, and every icon rendered as ~500 paths
+ * of a single character. The version query retires the old copy; normalise() below means
+ * even an unversioned stale copy still draws correctly instead of exploding.
+ */
+function loadPaths(base, pack, version) {
   if (GLOBAL_CACHE[pack]) return Promise.resolve(GLOBAL_CACHE[pack]);
   if (!INFLIGHT[pack]) {
-    INFLIGHT[pack] = fetch(base + '/packs/' + pack + '/paths.json')
+    INFLIGHT[pack] = fetch(base + '/packs/' + pack + '/paths.json?v=' + encodeURIComponent(version || '0'))
       .then(function (r) {
         if (!r.ok) throw new Error('HTTP ' + r.status);
         return r.json();
@@ -60,13 +67,20 @@ function loadPaths(base, pack) {
   return INFLIGHT[pack];
 }
 
+/** Accept both the current [viewBox, [d…]] and the 0.1.x [viewBox, d] shapes. */
+function normalise(entry) {
+  if (!entry) return null;
+  var ds = entry[1];
+  return [entry[0], typeof ds === 'string' ? [ds] : ds];
+}
+
 /**
  * One component shape for every icon in a pack. It closes over the name only —
  * the path data arrives later, so 1400 icons cost 1400 tiny closures, not 1400 payloads.
  */
-function makeIcon(React, base, pack, name, mode) {
+function makeIcon(React, base, pack, name, mode, version) {
   function PackIcon(props) {
-    var cached = GLOBAL_CACHE[pack] && GLOBAL_CACHE[pack][name];
+    var cached = normalise(GLOBAL_CACHE[pack] && GLOBAL_CACHE[pack][name]);
     var state = React.useState(cached);
     var data = state[0];
     var setData = state[1];
@@ -75,8 +89,9 @@ function makeIcon(React, base, pack, name, mode) {
       function () {
         if (data) return undefined;
         var alive = true;
-        loadPaths(base, pack).then(function (all) {
-          if (alive && all[name]) setData(all[name]);
+        loadPaths(base, pack, version).then(function (all) {
+          var d = normalise(all[name]);
+          if (alive && d) setData(d);
         });
         return function () {
           alive = false;
@@ -102,15 +117,21 @@ function makeIcon(React, base, pack, name, mode) {
       svgProps.fill = 'currentColor';
     }
 
+    // data[1] is a list: Font Awesome icons are one path, Tabler icons are several.
+    var shapes = null;
+    if (data) {
+      var ds = data[1];
+      shapes = [];
+      for (var i = 0; i < ds.length; i++) {
+        shapes.push(React.createElement('path', { key: i, d: ds[i] }));
+      }
+    }
+
     // Reserve the box while loading so the menu does not reflow when paths land.
     return React.createElement(
       'span',
       { role: 'img', className: 'anticon', 'aria-label': name, style: props && props.style },
-      React.createElement(
-        'svg',
-        svgProps,
-        data ? React.createElement('path', { d: data[1] }) : null
-      )
+      React.createElement('svg', svgProps, shapes)
     );
   }
   PackIcon.displayName = name;
@@ -163,9 +184,113 @@ function registerEverywhere(nb, icons, log) {
   return done;
 }
 
+/**
+ * PROBE (v0.2.1): can a plugin replace NocoBase's icon picker?
+ *
+ * The built-in picker renders every registered icon in the active tab at once. With the
+ * packs installed that is ~7,000 icons, and opening it freezes the tab for seconds.
+ * The fix is our own picker — a tab per pack, a small default set, search on demand —
+ * but that is only worth building if the override actually takes effect.
+ *
+ * NocoBase registers the picker by name:
+ *   this.flowEngine.flowSettings.registerComponents({ IconPicker: ... })
+ * so a plugin should be able to register over it. Two things could still defeat that:
+ * plugin load ORDER (if ours loads first, the core re-registers over us), and a second
+ * picker used by the classic client. This probe reports both instead of assuming.
+ */
+function probePicker(app, React, log) {
+  var report = { flowSettings: null, appComponents: null, previous: null };
+  try {
+    // The dialogs reference the picker as `"x-component": "IconPicker"`, i.e. resolved by
+    // NAME. Two registries can answer that name — the schema-component registry
+    // (app.addComponents) and the flow-settings one — and which applies depends on the
+    // surface. Register in both rather than guess.
+    var fset = app && app.flowEngine && app.flowEngine.flowSettings;
+
+    var existing =
+      (fset && fset.components && fset.components.IconPicker) ||
+      (fset && typeof fset.getComponent === 'function' && fset.getComponent('IconPicker')) ||
+      null;
+    report.previous = existing ? existing.displayName || existing.name || 'anonymous' : null;
+
+    function ProbePicker(props) {
+      return React.createElement(
+        'span',
+        {
+          style: {
+            display: 'inline-block',
+            padding: '2px 8px',
+            border: '1px solid #d9363e',
+            borderRadius: 6,
+            color: '#d9363e',
+            fontSize: 12,
+          },
+          'data-icon-packs-probe': '1',
+        },
+        'PICKER OVERRIDE OK'
+      );
+    }
+    ProbePicker.displayName = 'IconPacksProbePicker';
+
+    if (fset && typeof fset.registerComponents === 'function') {
+      fset.registerComponents({ IconPicker: ProbePicker });
+      report.flowSettings = 'registered';
+    } else {
+      report.flowSettings = 'unavailable';
+    }
+
+    if (app && typeof app.addComponents === 'function') {
+      app.addComponents({ IconPicker: ProbePicker });
+      report.appComponents = 'registered';
+    } else {
+      report.appComponents = 'unavailable';
+    }
+
+    log('picker override -> flowSettings=' + report.flowSettings +
+        ' addComponents=' + report.appComponents +
+        ' (previous was "' + report.previous + '")');
+  } catch (e) {
+    log('picker override threw: ' + (e && e.message));
+  }
+  return report;
+}
+
+/**
+ * Install our picker in place of the built-in one.
+ *
+ * Registered in BOTH registries because `"x-component": "IconPicker"` is resolved by name
+ * and the surface decides which registry answers. Re-asserted on the next tick in case a
+ * core plugin registers after us — plugin load order is not ours to control.
+ *
+ * Failure is contained: if anything here throws, the built-in picker stays in place and
+ * icon selection keeps working, just slowly.
+ */
+function installPicker(app, Picker, log) {
+  var done = [];
+  function register() {
+    try {
+      var fset = app && app.flowEngine && app.flowEngine.flowSettings;
+      if (fset && typeof fset.registerComponents === 'function') {
+        fset.registerComponents({ IconPicker: Picker });
+        done.push('flowSettings');
+      }
+      if (app && typeof app.addComponents === 'function') {
+        app.addComponents({ IconPicker: Picker });
+        done.push('addComponents');
+      }
+    } catch (e) {
+      log('picker install failed: ' + (e && e.message) + ' — the built-in picker stays');
+    }
+  }
+  register();
+  setTimeout(register, 0);
+  return done;
+}
+
 function createPlugin(nb, React, options) {
   var PACKS = options.packs; // [{ pack, manifest }]
   var VERBOSE = options.verbose;
+  var PROBE = options.probePicker;
 
   return class PluginIconPacksClient extends nb.Plugin {
     async load() {
@@ -181,7 +306,7 @@ function createPlugin(nb, React, options) {
         var mode = p.manifest.mode || 'fill';
         for (var j = 0; j < p.manifest.names.length; j++) {
           var name = p.manifest.names[j];
-          icons[name] = makeIcon(React, base, p.pack, name, mode);
+          icons[name] = makeIcon(React, base, p.pack, name, mode, options.version);
           total++;
         }
       }
@@ -189,6 +314,14 @@ function createPlugin(nb, React, options) {
       var where = registerEverywhere(nb, icons, log);
       log('registered ' + total + ' icons from ' + PACKS.length + ' pack(s) into: ' + where.join(', '));
       log('paths are lazy — nothing else is downloaded until an icon renders');
+
+      if (PROBE) {
+        var r = probePicker(this.app, React, log);
+        console.log('[icon-packs] picker probe ->', JSON.stringify(r));
+      } else if (options.picker) {
+        var where2 = installPicker(this.app, options.picker, log);
+        log('picker replaced in: ' + (where2.length ? where2.join(', ') : 'nowhere — built-in kept'));
+      }
     }
   };
 }

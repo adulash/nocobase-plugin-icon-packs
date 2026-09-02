@@ -2,9 +2,9 @@
   "name": "@adulash/plugin-icon-packs",
   "displayName": "Icon packs",
   "displayName.ar-EG": "حزم الأيقونات",
-  "version": "0.1.0",
-  "description": "Adds extra icon packs (Font Awesome, and more) to NocoBase's icon picker. Optionally replaces the built-in Ant Design icons.",
-  "description.ar-EG": "يضيف حزم أيقونات إضافية (Font Awesome وغيرها) إلى منتقي الأيقونات في NocoBase، مع خيار استبدال أيقونات Ant Design.",
+  "version": "0.3.0",
+  "description": "Adds extra icon packs (Font Awesome, Tabler) to NocoBase's icon picker. Optionally replaces the built-in Ant Design icons.",
+  "description.ar-EG": "يضيف حزم أيقونات إضافية (Font Awesome و Tabler) إلى منتقي الأيقونات في NocoBase، مع خيار استبدال أيقونات Ant Design.",
   "main": "dist/server/index.js",
   "license": "MIT",
   "files": [
@@ -21,7 +21,8 @@
     "nocobase-plugin",
     "icons",
     "icon-pack",
-    "font-awesome"
+    "font-awesome",
+    "tabler-icons"
   ],
   "repository": {
     "type": "git",
